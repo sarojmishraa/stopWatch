@@ -1,0 +1,26 @@
+# Local development stack. Production Postgres is expected to be Neon (or any
+# managed PostgreSQL 17); migrations are plain SQL so they run anywhere.
+name: eagle-engineering
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: eagle
+      POSTGRES_PASSWORD: eagle_dev_password
+      POSTGRES_DB: eagle
+      TZ: UTC
+      PGTZ: UTC
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "eagle", "-d", "eagle"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  pgdata:

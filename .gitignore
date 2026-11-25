@@ -1,0 +1,22 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+key.properties
+google-services.json
+
+# OS / editors
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+
+# Go
+backend/go-services/**/bin/
+*.test
+coverage.out
+
+# Flutter (also covered by the app's own .gitignore)
+apps/eagle-study-android/build/
+apps/eagle-study-android/.dart_tool/

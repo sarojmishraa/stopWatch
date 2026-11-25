@@ -1,0 +1,277 @@
+openapi: 3.1.0
+info:
+  title: Eagle Engineering Ecosystem API
+  version: 0.1.0
+  description: |
+    Backend for the EAGLE STUDY Android app.
+    Data lives in PostgreSQL; identity is Neon Auth (Managed Better Auth).
+
+    **Auth.** Every `/v1` call needs `Authorization: Bearer <JWT>` from Neon Auth
+    (`authClient.getSession()` → `data.session.token`). Tokens are EdDSA-signed
+    and expire after 15 minutes. The API verifies them against Neon Auth's JWKS.
+
+    **Offline sync.** Clients generate record UUIDs locally and `PUT` them.
+    Retrying the same write is safe. Conflicts resolve last-writer-wins on
+    `clientUpdatedAt`, and a losing write gets `409` with the server copy in
+    `current`. Deletes are soft, so other devices see them as tombstones in
+    `GET /v1/sync/study-sessions?since=<cursor>`.
+
+    **Errors** use RFC 9457 `application/problem+json`.
+servers:
+  - url: http://localhost:8080
+    description: Local development
+security:
+  - neonAuth: []
+
+paths:
+  /healthz:
+    get:
+      summary: Liveness probe
+      security: []
+      responses:
+        "200": { description: Process is up }
+  /readyz:
+    get:
+      summary: Readiness probe (checks PostgreSQL)
+      security: []
+      responses:
+        "200": { description: Ready }
+        "503": { $ref: "#/components/responses/Problem" }
+
+  /v1/me:
+    get:
+      summary: Current user (provisioned on first call) with preferences
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "401": { $ref: "#/components/responses/Problem" }
+        "403": { $ref: "#/components/responses/Problem" }
+
+  /v1/me/preferences:
+    put:
+      summary: Replace the user's preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PreferencesInput" }
+      responses:
+        "200":
+          description: Saved preferences
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Preferences" }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/study-sessions:
+    get:
+      summary: List live sessions that started in [from, to), newest first
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date-time }, description: "Default: 30 days ago" }
+        - { name: to, in: query, schema: { type: string, format: date-time }, description: "Default: now" }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        "200":
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessions]
+                properties:
+                  sessions: { type: array, items: { $ref: "#/components/schemas/StudySession" } }
+        "422": { $ref: "#/components/responses/Problem" }
+
+  /v1/study-sessions/{id}:
+    parameters:
+      - { name: id, in: path, required: true, schema: { type: string, format: uuid }, description: Client-generated UUID }
+    get:
+      summary: Get one live session
+      responses:
+        "200":
+          description: Session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudySession" }
+        "404": { $ref: "#/components/responses/Problem" }
+    put:
+      summary: Create or update a session (idempotent, last-writer-wins)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StudySessionInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudySession" }
+        "200":
+          description: Updated, or an exact replay that changed nothing
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudySession" }
+        "409":
+          description: |
+            The server holds a newer or deleted version (`current` is set), or the
+            ID belongs to another account (`current` is absent).
+          content:
+            application/problem+json:
+              schema: { $ref: "#/components/schemas/Problem" }
+        "422": { $ref: "#/components/responses/Problem" }
+    delete:
+      summary: Soft-delete (idempotent)
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Problem" }
+
+  /v1/sync/study-sessions:
+    get:
+      summary: Change feed including tombstones, oldest change first
+      parameters:
+        - { name: since, in: query, schema: { type: integer, minimum: 0, default: 0 } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 1000, default: 500 } }
+      responses:
+        "200":
+          description: A page of changes
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [changes, nextCursor, hasMore]
+                properties:
+                  changes: { type: array, items: { $ref: "#/components/schemas/StudySession" } }
+                  nextCursor: { type: integer, description: "Pass as `since` for the next page" }
+                  hasMore: { type: boolean }
+
+  /v1/stats/summary:
+    get:
+      summary: Study totals in the user's timezone (default Asia/Kolkata)
+      responses:
+        "200":
+          description: Summary
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Summary" }
+
+components:
+  securitySchemes:
+    neonAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (EdDSA, Neon Auth)
+
+  responses:
+    Problem:
+      description: Error
+      content:
+        application/problem+json:
+          schema: { $ref: "#/components/schemas/Problem" }
+
+  schemas:
+    Problem:
+      type: object
+      required: [type, title, status]
+      properties:
+        type: { type: string }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        requestId: { type: string }
+        errors:
+          type: array
+          items:
+            type: object
+            required: [field, message]
+            properties:
+              field: { type: string }
+              message: { type: string }
+        current: { $ref: "#/components/schemas/StudySession" }
+
+    User:
+      type: object
+      required: [id, email, createdAt, preferences]
+      properties:
+        id: { type: string, format: uuid, description: Neon Auth subject }
+        email: { type: string }
+        displayName: { type: [string, "null"] }
+        createdAt: { type: string, format: date-time }
+        preferences: { $ref: "#/components/schemas/Preferences" }
+
+    PreferencesInput:
+      type: object
+      additionalProperties: false
+      required: [timezone, dailyTargetMinutes, weeklyTargetMinutes]
+      properties:
+        timezone: { type: string, example: Asia/Kolkata, description: IANA zone }
+        dailyTargetMinutes: { type: integer, minimum: 0, maximum: 1440 }
+        weeklyTargetMinutes: { type: integer, minimum: 0, maximum: 10080 }
+
+    Preferences:
+      allOf:
+        - $ref: "#/components/schemas/PreferencesInput"
+        - type: object
+          required: [updatedAt]
+          properties:
+            updatedAt: { type: string, format: date-time }
+
+    StudySessionInput:
+      type: object
+      additionalProperties: false
+      required: [mode, startedAt, endedAt, durationSeconds, sourceDevice, clientUpdatedAt]
+      properties:
+        mode: { type: string, enum: [stopwatch, countdown, pomodoro] }
+        startedAt: { type: string, format: date-time }
+        endedAt: { type: string, format: date-time }
+        durationSeconds:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          description: Focused seconds. It can't exceed endedAt − startedAt, because pauses only reduce it.
+        plannedSeconds: { type: [integer, "null"], minimum: 1, maximum: 86400 }
+        subject: { type: [string, "null"], maxLength: 120 }
+        notes: { type: [string, "null"], maxLength: 4000 }
+        lapsSeconds:
+          type: array
+          maxItems: 500
+          items: { type: integer, minimum: 0 }
+          description: Cumulative lap marks, non-decreasing and ≤ durationSeconds
+        sourceDevice: { type: string, maxLength: 120 }
+        clientUpdatedAt: { type: string, format: date-time, description: When this version was edited on the device }
+
+    StudySession:
+      allOf:
+        - $ref: "#/components/schemas/StudySessionInput"
+        - type: object
+          required: [id, createdAt, updatedAt, deletedAt, changeSeq]
+          properties:
+            id: { type: string, format: uuid }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time }
+            deletedAt: { type: [string, "null"], format: date-time }
+            changeSeq: { type: integer, description: Sync cursor position }
+
+    Summary:
+      type: object
+      properties:
+        timezone: { type: string }
+        asOf: { type: string, format: date-time }
+        todaySeconds: { type: integer }
+        weekSeconds: { type: integer, description: ISO week, Monday start }
+        monthSeconds: { type: integer }
+        totalSeconds: { type: integer }
+        todaySessions: { type: integer }
+        totalSessions: { type: integer }
+        dailyTargetMinutes: { type: integer }
+        weeklyTargetMinutes: { type: integer }
+        lastSevenDays:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              seconds: { type: integer }
