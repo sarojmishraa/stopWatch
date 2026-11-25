@@ -2,27 +2,7 @@ import 'dart:convert';
 
 import 'package:path/path.dart' as path;
 import 'package:sqflite/sqflite.dart';
-
-class StudySummary {
-  const StudySummary({
-    required this.todaySeconds,
-    required this.weekSeconds,
-    required this.sessionCount,
-    required this.recentSessions,
-  });
-
-  final int todaySeconds;
-  final int weekSeconds;
-  final int sessionCount;
-  final List<StudySession> recentSessions;
-}
-
-class StudySession {
-  const StudySession({required this.startedAt, required this.durationSeconds});
-
-  final DateTime startedAt;
-  final int durationSeconds;
-}
+import 'package:uuid/uuid.dart';
 
 class RoadmapMilestone {
   const RoadmapMilestone({
@@ -74,33 +54,144 @@ class ScheduledStudyTask {
   final bool isSample;
 }
 
+/// Owns the on-device SQLite database: schema, migrations and seed data.
+///
+/// Tests pass a `sqflite_common_ffi` factory and an in-memory path so they run
+/// against real SQLite with the same migrations as the app.
 class StudyDatabase {
-  Database? _database;
+  StudyDatabase({DatabaseFactory? factory, String? path})
+    : _factory = factory, // ignore: prefer_initializing_formals
+      _path = path; // ignore: prefer_initializing_formals
 
-  Future<Database> get _db async {
-    return _database ??= await openDatabase(
-      path.join(await getDatabasesPath(), 'eagle_study.db'),
-      version: 2,
-      onCreate: (db, version) async {
-        await db.execute(
-          'CREATE TABLE sessions ('
-          'id INTEGER PRIMARY KEY AUTOINCREMENT, '
-          'started_at INTEGER NOT NULL, '
-          'duration_seconds INTEGER NOT NULL)',
-        );
-        await db.execute(
-          'CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
-        );
-        await _createLearningTables(db);
-        await _seedLearningPlan(db);
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
+  static const schemaVersion = 3;
+
+  final DatabaseFactory? _factory;
+  final String? _path;
+  Future<Database>? _opening;
+
+  /// The open database, shared by every repository.
+  Future<Database> get database => _opening ??= _open();
+
+  Future<Database> get _db => database;
+
+  Future<Database> _open() async {
+    final factory = _factory ?? databaseFactory;
+    final dbPath =
+        _path ?? path.join(await factory.getDatabasesPath(), 'eagle_study.db');
+    return factory.openDatabase(
+      dbPath,
+      options: OpenDatabaseOptions(
+        version: schemaVersion,
+        onCreate: (db, version) async {
+          await db.execute(
+            'CREATE TABLE app_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)',
+          );
           await _createLearningTables(db);
           await _seedLearningPlan(db);
-        }
-      },
+          await createSessionTables(db);
+        },
+        onUpgrade: (db, oldVersion, newVersion) async {
+          if (oldVersion < 2) {
+            await _createLearningTables(db);
+            await _seedLearningPlan(db);
+          }
+          if (oldVersion < 3) {
+            await createSessionTables(db);
+            await _migrateLegacySessions(db);
+          }
+        },
+      ),
     );
+  }
+
+  /// Schema v3: sessions keyed by client UUID plus a sync outbox. Constraints
+  /// mirror the PostgreSQL schema so invalid rows are rejected on-device.
+  static Future<void> createSessionTables(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE TABLE study_sessions ('
+      'id TEXT PRIMARY KEY, '
+      "mode TEXT NOT NULL CHECK (mode IN ('stopwatch', 'countdown', 'pomodoro')), "
+      'started_at INTEGER NOT NULL, '
+      'ended_at INTEGER NOT NULL, '
+      'duration_seconds INTEGER NOT NULL CHECK (duration_seconds BETWEEN 1 AND 86400), '
+      'planned_seconds INTEGER CHECK (planned_seconds IS NULL OR planned_seconds BETWEEN 1 AND 86400), '
+      'subject TEXT CHECK (subject IS NULL OR length(subject) <= 120), '
+      'notes TEXT CHECK (notes IS NULL OR length(notes) <= 4000), '
+      "laps TEXT NOT NULL DEFAULT '[]', "
+      'source_device TEXT NOT NULL, '
+      'client_updated_at INTEGER NOT NULL, '
+      'deleted_at INTEGER, '
+      'CHECK (ended_at >= started_at), '
+      'CHECK (duration_seconds * 1000 <= ended_at - started_at + 1000))',
+    );
+    await db.execute(
+      'CREATE INDEX study_sessions_started_idx '
+      'ON study_sessions (started_at DESC) WHERE deleted_at IS NULL',
+    );
+    // One pending operation per record: a newer edit replaces the older one.
+    await db.execute(
+      'CREATE TABLE sync_outbox ('
+      'id INTEGER PRIMARY KEY AUTOINCREMENT, '
+      'entity TEXT NOT NULL, '
+      'entity_id TEXT NOT NULL, '
+      "operation TEXT NOT NULL CHECK (operation IN ('put', 'delete')), "
+      'payload TEXT, '
+      'enqueued_at INTEGER NOT NULL, '
+      'attempts INTEGER NOT NULL DEFAULT 0, '
+      'last_error TEXT, '
+      'UNIQUE (entity, entity_id))',
+    );
+  }
+
+  /// Moves v2 `sessions` rows (integer id, start + duration only) into
+  /// `study_sessions` with fresh UUIDs, and queues each one for sync.
+  /// Legacy rows did not record their mode, so they are stored as stopwatch.
+  Future<void> _migrateLegacySessions(DatabaseExecutor db) async {
+    final exists = await db.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'",
+    );
+    if (exists.isEmpty) return;
+    final deviceId = await deviceIdFor(db);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final rows = await db.query('sessions', orderBy: 'started_at');
+    for (final row in rows) {
+      final startedAt = row['started_at']! as int;
+      final duration = row['duration_seconds']! as int;
+      if (duration <= 0) continue;
+      final id = const Uuid().v4();
+      final record = <String, Object?>{
+        'id': id,
+        'mode': 'stopwatch',
+        'started_at': startedAt,
+        'ended_at': startedAt + duration * 1000,
+        'duration_seconds': duration.clamp(1, 86400),
+        'laps': '[]',
+        'source_device': deviceId,
+        'client_updated_at': now,
+      };
+      await db.insert('study_sessions', record);
+      await db.insert('sync_outbox', {
+        'entity': 'study_session',
+        'entity_id': id,
+        'operation': 'put',
+        'enqueued_at': now,
+      });
+    }
+    await db.execute('DROP TABLE sessions');
+  }
+
+  /// Stable per-install identifier sent as `sourceDevice`.
+  static Future<String> deviceIdFor(DatabaseExecutor db) async {
+    final rows = await db.query(
+      'app_state',
+      columns: ['value'],
+      where: 'key = ?',
+      whereArgs: ['device_id'],
+    );
+    if (rows.isNotEmpty) return rows.single['value']! as String;
+    final id = 'android-${const Uuid().v4()}';
+    await db.insert('app_state', {'key': 'device_id', 'value': id});
+    return id;
   }
 
   Future<void> _createLearningTables(DatabaseExecutor db) async {
@@ -528,52 +619,6 @@ class StudyDatabase {
       'app_state',
       where: 'key = ?',
       whereArgs: ['timer'],
-    );
-  }
-
-  Future<void> saveSession({
-    required DateTime startedAt,
-    required int durationSeconds,
-  }) async {
-    if (durationSeconds <= 0) return;
-    await (await _db).insert('sessions', {
-      'started_at': startedAt.millisecondsSinceEpoch,
-      'duration_seconds': durationSeconds,
-    });
-  }
-
-  Future<StudySummary> loadSummary({DateTime? now}) async {
-    final current = now ?? DateTime.now();
-    final today = DateTime(current.year, current.month, current.day);
-    final week = today.subtract(const Duration(days: 6));
-    final db = await _db;
-    final rows = await db.query(
-      'sessions',
-      columns: ['started_at', 'duration_seconds'],
-      orderBy: 'started_at DESC',
-    );
-    var todaySeconds = 0;
-    var weekSeconds = 0;
-    for (final row in rows) {
-      final startedAt = DateTime.fromMillisecondsSinceEpoch(
-        row['started_at']! as int,
-      );
-      final duration = row['duration_seconds']! as int;
-      if (!startedAt.isBefore(today)) todaySeconds += duration;
-      if (!startedAt.isBefore(week)) weekSeconds += duration;
-    }
-    return StudySummary(
-      todaySeconds: todaySeconds,
-      weekSeconds: weekSeconds,
-      sessionCount: rows.length,
-      recentSessions: rows.take(4).map((row) {
-        return StudySession(
-          startedAt: DateTime.fromMillisecondsSinceEpoch(
-            row['started_at']! as int,
-          ),
-          durationSeconds: row['duration_seconds']! as int,
-        );
-      }).toList(),
     );
   }
 }

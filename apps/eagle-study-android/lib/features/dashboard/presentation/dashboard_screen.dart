@@ -1,10 +1,12 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/glass_panel.dart';
+import '../../sessions/domain/study_session.dart';
+import '../../sessions/presentation/session_format.dart';
 import '../../timer/application/study_timer_controller.dart';
 import '../../timer/domain/study_timer_state.dart';
 
@@ -13,10 +15,76 @@ class DashboardScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(secondTickerProvider);
     final timer = ref.watch(studyTimerProvider);
     final controller = ref.read(studyTimerProvider.notifier);
-    final now = DateTime.now().millisecondsSinceEpoch;
+    final summary = ref.watch(studySummaryProvider).value ?? StudySummary.empty;
+    final now = ref.read(clockProvider)().millisecondsSinceEpoch;
     final seconds = timer.secondsAt(now);
+
+    ref.listen(studyTimerProvider.select((s) => s.lastSaved), (previous, next) {
+      if (next == null || identical(previous, next)) return;
+      final text = next.capped
+          ? 'Saved ${formatDuration(next.durationSeconds)}: capped at 24 hours.'
+          : 'Session saved: ${formatDuration(next.durationSeconds)}.';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+    });
+
+    Future<void> confirmReset() async {
+      // Read the clock at tap time, not from the last repaint.
+      final focusedNow = ref
+          .read(studyTimerProvider)
+          .focusedSecondsAt(ref.read(clockProvider)().millisecondsSinceEpoch);
+      if (focusedNow >= 60) {
+        final discard = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Discard this session?'),
+            content: Text(
+              '${formatDuration(focusedNow)} of focus will not be saved. '
+              'Use FINISH to keep it.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('KEEP GOING'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(backgroundColor: AppColors.pink),
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('DISCARD'),
+              ),
+            ],
+          ),
+        );
+        if (discard != true) return;
+      }
+      await controller.reset();
+    }
+
+    Future<void> finish() async {
+      try {
+        final outcome = await controller.finish();
+        if (outcome == FinishOutcome.tooShort && context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Under a second: nothing to save.')),
+          );
+        }
+      } catch (error) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Couldn't save the session: $error")),
+        );
+      }
+    }
+
+    void lap() {
+      if (!controller.addLap() && timer.laps.length >= maxLaps) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Lap limit reached (500).')),
+        );
+      }
+    }
 
     return Scaffold(
       body: Stack(
@@ -37,8 +105,8 @@ class DashboardScreen extends ConsumerWidget {
                           _Header(onFocusTap: () => context.push('/study')),
                           const SizedBox(height: 22),
                           _WelcomePanel(
-                            weekSeconds: timer.weekSeconds,
-                            sessionCount: timer.sessionCount,
+                            weekSeconds: summary.weekSeconds,
+                            sessionCount: summary.todaySessions,
                           ),
                           const SizedBox(height: 18),
                           _TimerCard(
@@ -47,17 +115,20 @@ class DashboardScreen extends ConsumerWidget {
                             countdownDurationSeconds:
                                 timer.countdownDurationSeconds,
                             isRunning: timer.isRunning,
+                            hasSession: timer.hasSession,
+                            subject: timer.subject,
+                            onSubjectSelected: controller.setSubject,
                             onModeSelected: controller.selectMode,
                             onToggle: controller.startOrResume,
-                            onReset: controller.reset,
-                            onLap: controller.addLap,
-                            onFinish: controller.finish,
+                            onReset: confirmReset,
+                            onLap: lap,
+                            onFinish: finish,
                           ),
                           if (timer.mode == TimerMode.countdown) ...[
                             const SizedBox(height: 18),
                             _PresetPicker(
                               selectedSeconds: timer.countdownDurationSeconds,
-                              enabled: !timer.isRunning,
+                              enabled: !timer.hasSession,
                               onSelected: controller.setCountdownDuration,
                             ),
                           ],
@@ -66,9 +137,9 @@ class DashboardScreen extends ConsumerWidget {
                             _LapList(laps: timer.laps),
                           ],
                           const SizedBox(height: 24),
-                          _SectionHeading(
+                          const _SectionHeading(
                             title: 'TODAY AT A GLANCE',
-                            trailing: 'LOCAL HISTORY',
+                            trailing: 'ASIA/KOLKATA',
                           ),
                           const SizedBox(height: 12),
                           Row(
@@ -76,17 +147,22 @@ class DashboardScreen extends ConsumerWidget {
                               Expanded(
                                 child: _MetricCard(
                                   icon: Icons.today_rounded,
-                                  label: "Today's focus",
-                                  value: _formatDuration(timer.todaySeconds),
+                                  label:
+                                      "Today · goal ${formatDuration(summary.dailyTargetMinutes * 60)}",
+                                  value: formatDuration(summary.todaySeconds),
                                   tint: AppColors.cyan,
+                                  progress: _ratio(
+                                    summary.todaySeconds,
+                                    summary.dailyTargetMinutes * 60,
+                                  ),
                                 ),
                               ),
                               const SizedBox(width: 12),
                               Expanded(
                                 child: _MetricCard(
                                   icon: Icons.bolt_rounded,
-                                  label: 'Sessions',
-                                  value: '${timer.sessionCount}',
+                                  label: 'Sessions today',
+                                  value: '${summary.todaySessions}',
                                   tint: AppColors.lime,
                                 ),
                               ),
@@ -94,31 +170,50 @@ class DashboardScreen extends ConsumerWidget {
                               Expanded(
                                 child: _MetricCard(
                                   icon: Icons.date_range_rounded,
-                                  label: 'This week',
-                                  value: _formatDuration(timer.weekSeconds),
+                                  label:
+                                      'Week · goal ${formatDuration(summary.weeklyTargetMinutes * 60)}',
+                                  value: formatDuration(summary.weekSeconds),
                                   tint: const Color(0xFFB69AFF),
+                                  progress: _ratio(
+                                    summary.weekSeconds,
+                                    summary.weeklyTargetMinutes * 60,
+                                  ),
                                 ),
                               ),
                             ],
                           ),
-                          if (timer.recentSessions.isNotEmpty) ...[
-                            const SizedBox(height: 26),
-                            _SectionHeading(
-                              title: 'RECENT SESSIONS',
-                              trailing: 'ON THIS DEVICE',
-                            ),
-                            const SizedBox(height: 10),
-                            ...timer.recentSessions.map(
-                              (session) => _SessionRow(
-                                startedAt: DateTime.fromMillisecondsSinceEpoch(
-                                  session.startedAtMs,
+                          const SizedBox(height: 26),
+                          Row(
+                            children: [
+                              const Expanded(
+                                child: _SectionHeading(
+                                  title: 'RECENT SESSIONS',
+                                  trailing: '',
                                 ),
-                                durationSeconds: session.durationSeconds,
                               ),
+                              TextButton(
+                                onPressed: () => context.push('/history'),
+                                child: const Text('VIEW ALL'),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          if (summary.recent.isEmpty)
+                            const Text(
+                              'Finished sessions will appear here.',
+                              style: TextStyle(color: AppColors.muted),
                             ),
-                          ],
+                          ...summary.recent.map(
+                            (session) => _SessionRow(
+                              startedAt: ref
+                                  .read(studyCalendarProvider)
+                                  .local(session.startedAt),
+                              durationSeconds: session.durationSeconds,
+                              subject: session.subject,
+                            ),
+                          ),
                           const SizedBox(height: 18),
-                          const _OfflineNote(),
+                          _OfflineNote(pendingSync: summary.pendingSync),
                         ],
                       ),
                     ),
@@ -133,22 +228,8 @@ class DashboardScreen extends ConsumerWidget {
   }
 }
 
-String _formatDuration(int seconds) {
-  final hours = seconds ~/ 3600;
-  final minutes = (seconds % 3600) ~/ 60;
-  if (hours > 0) return '${hours}h ${minutes}m';
-  return '${minutes}m';
-}
-
-String _formatClock(int seconds, {required bool countdown}) {
-  final hours = seconds ~/ 3600;
-  final minutes = (seconds % 3600) ~/ 60;
-  final remainder = seconds % 60;
-  final result = hours > 0
-      ? '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}'
-      : '${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
-  return countdown ? result : result;
-}
+double? _ratio(int value, int target) =>
+    target <= 0 ? null : (value / target).clamp(0, 1).toDouble();
 
 class _Header extends StatelessWidget {
   const _Header({required this.onFocusTap});
@@ -265,7 +346,7 @@ class _WelcomePanel extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '$sessionCount sessions · ${_formatDuration(weekSeconds)} this week',
+                  '$sessionCount sessions · ${formatDuration(weekSeconds)} this week',
                   style: const TextStyle(color: AppColors.muted, fontSize: 12),
                 ),
               ],
@@ -298,6 +379,9 @@ class _TimerCard extends StatelessWidget {
     required this.seconds,
     required this.countdownDurationSeconds,
     required this.isRunning,
+    required this.hasSession,
+    required this.subject,
+    required this.onSubjectSelected,
     required this.onModeSelected,
     required this.onToggle,
     required this.onReset,
@@ -309,6 +393,9 @@ class _TimerCard extends StatelessWidget {
   final int seconds;
   final int countdownDurationSeconds;
   final bool isRunning;
+  final bool hasSession;
+  final String? subject;
+  final ValueChanged<String?> onSubjectSelected;
   final ValueChanged<TimerMode> onModeSelected;
   final VoidCallback onToggle;
   final VoidCallback onReset;
@@ -336,24 +423,32 @@ class _TimerCard extends StatelessWidget {
                 _ModeButton(
                   label: 'STOPWATCH',
                   selected: !isCountdown,
+                  enabled: !hasSession,
                   onTap: () => onModeSelected(TimerMode.stopwatch),
                 ),
                 _ModeButton(
                   label: 'FOCUS TIMER',
                   selected: isCountdown,
+                  enabled: !hasSession,
                   onTap: () => onModeSelected(TimerMode.countdown),
                 ),
               ],
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
+          _SubjectPicker(selected: subject, onSelected: onSubjectSelected),
+          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               const Icon(Icons.circle, size: 7, color: AppColors.lime),
               const SizedBox(width: 7),
               Text(
-                isRunning ? 'SESSION IN PROGRESS' : 'READY WHEN YOU ARE',
+                isRunning
+                    ? 'SESSION IN PROGRESS'
+                    : hasSession
+                    ? 'PAUSED'
+                    : 'READY WHEN YOU ARE',
                 style: const TextStyle(
                   color: AppColors.muted,
                   fontSize: 10,
@@ -389,7 +484,7 @@ class _TimerCard extends StatelessWidget {
                     child: FittedBox(
                       fit: BoxFit.scaleDown,
                       child: Text(
-                        _formatClock(seconds, countdown: isCountdown),
+                        formatClock(seconds),
                         style: const TextStyle(
                           color: AppColors.text,
                           fontSize: 58,
@@ -425,11 +520,20 @@ class _TimerCard extends StatelessWidget {
               const SizedBox(width: 18),
               _PrimaryPlayButton(isRunning: isRunning, onTap: onToggle),
               const SizedBox(width: 18),
-              _SmallAction(
-                icon: isCountdown ? Icons.check_rounded : Icons.flag_rounded,
-                label: isCountdown ? 'FINISH' : 'LAP',
-                onTap: isCountdown ? onFinish : onLap,
-              ),
+              // Stopwatch: LAP while running, FINISH once paused.
+              // Focus timer: FINISH ends early and saves the focused part.
+              if (!isCountdown && isRunning)
+                _SmallAction(
+                  icon: Icons.flag_rounded,
+                  label: 'LAP',
+                  onTap: onLap,
+                )
+              else
+                _SmallAction(
+                  icon: Icons.check_rounded,
+                  label: 'FINISH',
+                  onTap: hasSession ? onFinish : null,
+                ),
             ],
           ),
           if (isRunning) ...[
@@ -458,18 +562,20 @@ class _ModeButton extends StatelessWidget {
   const _ModeButton({
     required this.label,
     required this.selected,
+    required this.enabled,
     required this.onTap,
   });
 
   final String label;
   final bool selected;
+  final bool enabled;
   final VoidCallback onTap;
 
   @override
   Widget build(BuildContext context) {
     return Expanded(
       child: GestureDetector(
-        onTap: onTap,
+        onTap: enabled ? onTap : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 200),
           padding: const EdgeInsets.symmetric(vertical: 11),
@@ -556,7 +662,7 @@ class _SmallAction extends StatelessWidget {
 
   final IconData icon;
   final String label;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -569,12 +675,20 @@ class _SmallAction extends StatelessWidget {
           padding: const EdgeInsets.symmetric(vertical: 7),
           child: Column(
             children: [
-              Icon(icon, size: 20, color: AppColors.muted),
+              Icon(
+                icon,
+                size: 20,
+                color: onTap == null
+                    ? AppColors.muted.withValues(alpha: 0.35)
+                    : AppColors.muted,
+              ),
               const SizedBox(height: 5),
               Text(
                 label,
-                style: const TextStyle(
-                  color: AppColors.muted,
+                style: TextStyle(
+                  color: onTap == null
+                      ? AppColors.muted.withValues(alpha: 0.35)
+                      : AppColors.muted,
                   fontSize: 9,
                   letterSpacing: 1.2,
                   fontWeight: FontWeight.w700,
@@ -597,7 +711,7 @@ class _PresetPicker extends StatefulWidget {
 
   final int selectedSeconds;
   final bool enabled;
-  final ValueChanged<int> onSelected;
+  final bool Function(int seconds) onSelected;
 
   @override
   State<_PresetPicker> createState() => _PresetPickerState();
@@ -632,7 +746,7 @@ class _PresetPickerState extends State<_PresetPicker> {
               _DurationField(
                 controller: _hoursController,
                 label: 'Hours',
-                max: 99,
+                max: 24,
               ),
               const SizedBox(width: 8),
               _DurationField(
@@ -661,10 +775,14 @@ class _PresetPickerState extends State<_PresetPicker> {
                   (int.tryParse(_hoursController.text) ?? 0) * 3600 +
                   (int.tryParse(_minutesController.text) ?? 0) * 60 +
                   (int.tryParse(_secondsController.text) ?? 0);
-              if (total == 0) {
+              if (total == 0 || total > maxSessionSeconds) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Enter a duration greater than zero.'),
+                  SnackBar(
+                    content: Text(
+                      total == 0
+                          ? 'Enter a duration greater than zero.'
+                          : 'A session can be at most 24 hours.',
+                    ),
                   ),
                 );
                 return;
@@ -802,7 +920,7 @@ class _LapList extends StatelessWidget {
                   ),
                   const Spacer(),
                   Text(
-                    _formatClock(laps[index], countdown: false),
+                    formatClock(laps[index]),
                     style: const TextStyle(
                       color: AppColors.text,
                       fontSize: 13,
@@ -858,12 +976,14 @@ class _MetricCard extends StatelessWidget {
     required this.label,
     required this.value,
     required this.tint,
+    this.progress,
   });
 
   final IconData icon;
   final String label;
   final String value;
   final Color tint;
+  final double? progress;
 
   @override
   Widget build(BuildContext context) {
@@ -894,6 +1014,18 @@ class _MetricCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: AppColors.muted, fontSize: 9),
           ),
+          if (progress != null) ...[
+            const SizedBox(height: 8),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: progress,
+                minHeight: 4,
+                backgroundColor: Colors.white.withValues(alpha: 0.08),
+                valueColor: AlwaysStoppedAnimation(tint),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -901,14 +1033,21 @@ class _MetricCard extends StatelessWidget {
 }
 
 class _SessionRow extends StatelessWidget {
-  const _SessionRow({required this.startedAt, required this.durationSeconds});
+  const _SessionRow({
+    required this.startedAt,
+    required this.durationSeconds,
+    required this.subject,
+  });
 
+  /// Local time in the study timezone.
   final DateTime startedAt;
   final int durationSeconds;
+  final String? subject;
 
   @override
   Widget build(BuildContext context) {
-    final time = TimeOfDay.fromDateTime(startedAt).format(context);
+    final time =
+        '${dayLabel(startedAt).split(',').first} ${clockTime(startedAt)}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: GlassPanel(
@@ -921,9 +1060,16 @@ class _SessionRow extends StatelessWidget {
               time,
               style: const TextStyle(color: AppColors.muted, fontSize: 12),
             ),
-            const Spacer(),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                subject ?? '',
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(color: AppColors.text, fontSize: 12),
+              ),
+            ),
             Text(
-              _formatDuration(durationSeconds),
+              formatDuration(durationSeconds),
               style: const TextStyle(
                 color: AppColors.text,
                 fontSize: 12,
@@ -938,7 +1084,9 @@ class _SessionRow extends StatelessWidget {
 }
 
 class _OfflineNote extends StatelessWidget {
-  const _OfflineNote();
+  const _OfflineNote({required this.pendingSync});
+
+  final int pendingSync;
 
   @override
   Widget build(BuildContext context) {
@@ -953,7 +1101,10 @@ class _OfflineNote extends StatelessWidget {
         const SizedBox(width: 6),
         Flexible(
           child: Text(
-            'Your study data stays on this device',
+            pendingSync == 0
+                ? 'Saved on this device'
+                : 'Saved on this device · $pendingSync '
+                      '${pendingSync == 1 ? 'change' : 'changes'} waiting to sync',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: AppColors.muted.withValues(alpha: 0.8),
@@ -1024,6 +1175,46 @@ class _GlowOrb extends StatelessWidget {
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         gradient: RadialGradient(colors: [color, color.withValues(alpha: 0)]),
+      ),
+    );
+  }
+}
+
+class _SubjectPicker extends StatelessWidget {
+  const _SubjectPicker({required this.selected, required this.onSelected});
+
+  final String? selected;
+  final ValueChanged<String?> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 34,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          for (final subject in studySubjects)
+            Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: ChoiceChip(
+                label: Text(subject),
+                selected: subject == selected,
+                showCheckmark: false,
+                onSelected: (on) => onSelected(on ? subject : null),
+                labelStyle: TextStyle(
+                  color: subject == selected
+                      ? AppColors.background
+                      : AppColors.muted,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                ),
+                selectedColor: AppColors.cyan,
+                backgroundColor: Colors.white.withValues(alpha: 0.05),
+                side: BorderSide(color: Colors.white.withValues(alpha: 0.08)),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+        ],
       ),
     );
   }

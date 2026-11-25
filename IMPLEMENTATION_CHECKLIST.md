@@ -16,17 +16,24 @@ A box is ticked only when its implementation exists **and** its automated tests 
 - ✅ Stats summary in the user's timezone (Asia/Kolkata default)
 - ✅ OpenAPI 3.1 contract ([openapi.yaml](backend/api-contracts/openapi.yaml))
 - ✅ Go integration tests on real Postgres: 12 tests incl. CORS-off-by-default, `-race`
-- ✅ Flutter app moved, compile errors fixed, analyzer clean, 4 tests passing
+- ✅ Flutter app moved, compile errors fixed, analyzer clean
 - ✅ Scope decision: single Flutter Android app (Next.js dashboard dropped; see D9)
 - ⬜ CI pipeline (GitHub Actions: Go tests with a Postgres service, Flutter analyze/test)
-- ⬜ Git repository initialised (the folder is not under version control yet)
+- ✅ Git repository initialised
 
 ## Phase 2: EAGLE STUDY dashboard, stopwatch, countdown, local storage
-- 🟡 Timestamp-anchored stopwatch/countdown with persisted state (existing; unit-tested)
-- 🟡 Presets 5/15/25/45/60/90 and custom H:M:S (existing UI; needs widget tests)
-- ⬜ Client-generated session UUIDs + local outbox table for sync
-- ⬜ Lap history per session persisted (currently lost on finish)
-- ⬜ Session history screen
+- ✅ Timestamp-anchored stopwatch/countdown; state persisted and restored after process death (tested)
+- ✅ Countdown that ends while the app is suspended or killed is saved with its real end time (tested)
+- ✅ Session IDs assigned at start; save + timer clear in one SQLite transaction (no duplicates on crash/double tap; tested)
+- ✅ SQLite schema v3 with the server's constraints; v2 → v3 migration of existing sessions (tested)
+- ✅ Sync outbox: every save/edit/delete queued, one pending op per record (upload itself is Phase 9)
+- ✅ Laps, subject, planned duration and real end time stored per session
+- ✅ Totals in Asia/Kolkata (IANA rules; Monday weeks), daily 6 h and weekly 50 h targets shown with progress
+- ✅ Session history screen: grouped by day, details and laps, edit subject/notes, delete with confirmation
+- ✅ Presets 5/15/25/45/60/90 and custom H:M:S up to 24 h; discard confirmation for sessions over a minute
+- ✅ 31 Flutter tests on real SQLite (unit, repository, migration, controller, widget)
+- ⬜ Editable daily/weekly targets (fixed defaults for now)
+- ⬜ Live foreground notification while the timer runs (Phase 4)
 
 ## Phase 3: Alarm engine (Kotlin)
 - ⬜ AlarmManager exact alarms + SCHEDULE_EXACT_ALARM flow, notification channels
@@ -65,5 +72,5 @@ A box is ticked only when its implementation exists **and** its automated tests 
 ## Phase 10: Hardening & deployment
 - ⬜ Row-level security, rate limiting, security audit
 - ⬜ Neon production database + Neon Auth configuration
-- ⬜ Container images, Kubernetes/Terraform, CI/CD, release-signed APK
+- ⬜ API container image and deployment, CI, release-signed APK
 - ⬜ Flutter integration tests on device, native Android tests, performance budgets

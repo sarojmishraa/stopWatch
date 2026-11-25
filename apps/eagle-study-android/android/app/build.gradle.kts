@@ -1,5 +1,7 @@
 plugins {
     id("com.android.application")
+    // Google services: reads google-services.json (Firebase project eagle-23b0f).
+    id("com.google.gms.google-services")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
 }
@@ -38,6 +40,18 @@ android {
     }
 }
 
+// Release builds target 64-bit ARM phones only (built with
+// --target-platform android-arm64). Without this, Firebase's native libraries
+// for other ABIs would let 32-bit/x86 devices install the APK and then crash
+// for lack of the Flutter engine. Debug builds are left untouched.
+androidComponents {
+    onVariants(selector().withBuildType("release")) { variant ->
+        variant.packaging.jniLibs.excludes.addAll(
+            listOf("lib/armeabi-v7a/**", "lib/x86/**", "lib/x86_64/**"),
+        )
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17
@@ -46,4 +60,10 @@ kotlin {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // Firebase BoM keeps all Firebase library versions compatible.
+    implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
+    implementation("com.google.firebase:firebase-analytics")
 }

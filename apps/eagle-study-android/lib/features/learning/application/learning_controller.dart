@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../core/persistence/study_database.dart';
+import '../../../core/providers.dart';
 
 final learningControllerProvider =
     NotifierProvider<LearningController, LearningState>(LearningController.new);
@@ -91,7 +92,7 @@ class LearningState {
 }
 
 class LearningController extends Notifier<LearningState> {
-  final _database = StudyDatabase();
+  StudyDatabase get _database => ref.read(studyDatabaseProvider);
 
   @override
   LearningState build() {

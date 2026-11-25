@@ -10,14 +10,12 @@ flowchart LR
     NA["Neon Auth<br/>(Managed Better Auth)"]
     API["Go API<br/>chi · pgx"]
     PG[("PostgreSQL 17<br/>Docker locally · Neon in prod")]
-    J["Java analytics service<br/>(Phase 10, optional)"]
 
     A -- "sign in" --> NA
     A -- "Bearer JWT · REST" --> API
     API -- "JWKS (cached)" --> NA
     API --> PG
     A -. "offline queue" .-> L[("SQLite on device")]
-    J -.-> PG
 ```
 
 ## Decisions
@@ -26,7 +24,7 @@ flowchart LR
 |---|----------|-----|-------------|
 | D1 | **PostgreSQL is the system of record**, replacing Cloud Firestore. | User requirement. Relational integrity, SQL analytics, and timezone-correct aggregation in the database. | A backend API is required: clients never connect to the database directly. Firestore security rules become API authorization plus constraints. |
 | D2 | **Neon Auth** for identity. | User choice. Managed Better Auth, no password storage in our code, and it pairs with Neon Postgres. | API verifies EdDSA JWTs via JWKS (`iss = aud =` auth origin, 15-min expiry). `users.id` is the token `sub`. |
-| D3 | **Go API** owns all data access. | Small, fast, easy to deploy. Matches the Month 4–5 curriculum. | Spring Boot is kept for an optional analytics/reporting service later, so the Java skills still show up in the portfolio. |
+| D3 | **Go API** owns all data access. | Small, fast, easy to deploy. Matches the Month 4–5 curriculum. | One backend service and one language on the server. |
 | D4 | **Docker Postgres now, Neon later.** | Fast local loop and hermetic tests, with no cloud dependency until deployment. | Migrations are plain SQL (golang-migrate) and portable to Neon/RDS. |
 | D5 | **Offline-first sync with client UUIDs + change feed.** | The Android app must work without a network. | `PUT` by client UUID is idempotent. Conflicts are last-writer-wins on `clientUpdatedAt`, and the loser gets `409` + the server copy. Deletes are tombstones. Pull uses a per-user `change_seq` cursor. |
 | D6 | **Dev auth issuer** (`cmd/devauth`) mimics Neon Auth locally. | Lets the whole stack run without cloud credentials while exercising the real verification code. | Binds to loopback only and refuses anything else. Never deployed. |

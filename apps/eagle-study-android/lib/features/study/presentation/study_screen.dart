@@ -1,9 +1,10 @@
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
+import '../../sessions/presentation/session_format.dart';
 import '../../timer/application/study_timer_controller.dart';
 import '../../timer/domain/study_timer_state.dart';
 
@@ -12,9 +13,12 @@ class StudyScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    ref.watch(secondTickerProvider);
     final state = ref.watch(studyTimerProvider);
     final controller = ref.read(studyTimerProvider.notifier);
-    final seconds = state.secondsAt(DateTime.now().millisecondsSinceEpoch);
+    final seconds = state.secondsAt(
+      ref.read(clockProvider)().millisecondsSinceEpoch,
+    );
     final isCountdown = state.mode == TimerMode.countdown;
     final progress = isCountdown && state.countdownDurationSeconds > 0
         ? 1 - seconds / state.countdownDurationSeconds
@@ -98,7 +102,10 @@ class StudyScreen extends ConsumerWidget {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        isCountdown ? 'FOCUS SESSION' : 'STOPWATCH SESSION',
+                        [
+                          isCountdown ? 'FOCUS SESSION' : 'STOPWATCH SESSION',
+                          ?state.subject?.toUpperCase(),
+                        ].join(' · '),
                         style: const TextStyle(
                           color: AppColors.muted,
                           fontSize: 10,
@@ -127,7 +134,7 @@ class StudyScreen extends ConsumerWidget {
                       FittedBox(
                         fit: BoxFit.scaleDown,
                         child: Text(
-                          _clock(seconds),
+                          formatClock(seconds),
                           style: const TextStyle(
                             color: AppColors.text,
                             fontSize: 72,
@@ -142,10 +149,25 @@ class StudyScreen extends ConsumerWidget {
                         children: [
                           Expanded(
                             child: OutlinedButton.icon(
-                              onPressed: () async {
-                                await controller.finish();
-                                if (context.mounted) context.pop();
-                              },
+                              onPressed: state.hasSession
+                                  ? () async {
+                                      final messenger = ScaffoldMessenger.of(
+                                        context,
+                                      );
+                                      try {
+                                        await controller.finish();
+                                        if (context.mounted) context.pop();
+                                      } catch (error) {
+                                        messenger.showSnackBar(
+                                          SnackBar(
+                                            content: Text(
+                                              "Couldn't save the session: $error",
+                                            ),
+                                          ),
+                                        );
+                                      }
+                                    }
+                                  : null,
                               icon: const Icon(Icons.stop_rounded),
                               label: const Text('FINISH'),
                               style: OutlinedButton.styleFrom(
@@ -170,7 +192,11 @@ class StudyScreen extends ConsumerWidget {
                                     : Icons.play_arrow_rounded,
                               ),
                               label: Text(
-                                state.isRunning ? 'PAUSE' : 'START STUDY',
+                                state.isRunning
+                                    ? 'PAUSE'
+                                    : state.hasSession
+                                    ? 'RESUME'
+                                    : 'START STUDY',
                               ),
                               style: FilledButton.styleFrom(
                                 backgroundColor: state.isRunning
@@ -196,16 +222,6 @@ class StudyScreen extends ConsumerWidget {
       ),
     );
   }
-}
-
-String _clock(int seconds) {
-  final hours = seconds ~/ 3600;
-  final minutes = (seconds % 3600) ~/ 60;
-  final remainder = seconds % 60;
-  if (hours > 0) {
-    return '${hours.toString().padLeft(2, '0')}:${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
-  }
-  return '${minutes.toString().padLeft(2, '0')}:${remainder.toString().padLeft(2, '0')}';
 }
 
 class _FocusBackdrop extends StatelessWidget {
