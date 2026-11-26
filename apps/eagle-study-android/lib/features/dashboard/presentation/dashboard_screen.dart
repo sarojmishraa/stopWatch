@@ -5,6 +5,9 @@ import 'package:go_router/go_router.dart';
 import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/glass_panel.dart';
+import '../../alarms/application/alarm_controller.dart';
+import '../../alarms/presentation/alarm_format.dart';
+import '../../eagle/presentation/widgets/eagle_3d_view.dart';
 import '../../sessions/domain/study_session.dart';
 import '../../sessions/presentation/session_format.dart';
 import '../../timer/application/study_timer_controller.dart';
@@ -103,12 +106,16 @@ class DashboardScreen extends ConsumerWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           _Header(onFocusTap: () => context.push('/study')),
-                          const SizedBox(height: 22),
+                          const SizedBox(height: 16),
+                          const _UpcomingAlarm(),
+                          const SizedBox(height: 12),
                           _WelcomePanel(
                             weekSeconds: summary.weekSeconds,
                             sessionCount: summary.todaySessions,
                           ),
-                          const SizedBox(height: 18),
+                          const SizedBox(height: 6),
+                          const Center(child: Eagle3DView(size: 170)),
+                          const SizedBox(height: 6),
                           _TimerCard(
                             mode: timer.mode,
                             seconds: seconds,
@@ -289,6 +296,17 @@ class _Header extends StatelessWidget {
               ),
             ],
           ),
+        ),
+        IconButton(
+          tooltip: 'About & credits',
+          onPressed: () => showLicensePage(
+            context: context,
+            applicationName: 'EAGLE STUDY',
+            applicationLegalese:
+                '3D eagle: "Bald Eagle" by ucdavisterc (CC BY 4.0), see the '
+                '"Bald Eagle 3D model" entry below.',
+          ),
+          icon: const Icon(Icons.info_outline_rounded, color: AppColors.muted),
         ),
         IconButton.filledTonal(
           onPressed: onFocusTap,
@@ -1215,6 +1233,40 @@ class _SubjectPicker extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _UpcomingAlarm extends ConsumerWidget {
+  const _UpcomingAlarm();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final next = ref.watch(nextAlarmProvider);
+    final calendar = ref.watch(studyCalendarProvider);
+    final now = ref.read(clockProvider)();
+    return GlassPanel(
+      child: ListTile(
+        onTap: () => context.push('/alarms'),
+        leading: const Icon(Icons.alarm_rounded, color: AppColors.cyan),
+        title: Text(
+          next == null
+              ? 'No alarm set'
+              : '${timeLabel(next.alarm.hour, next.alarm.minute)} · '
+                    '${relativeLabel(next.at, now, calendar)}',
+          style: const TextStyle(color: AppColors.text, fontSize: 14),
+        ),
+        subtitle: Text(
+          next == null
+              ? 'Tap to add a study alarm'
+              : '${repeatLabel(next.alarm.days)} · ${next.alarm.sound.label}',
+          style: const TextStyle(color: AppColors.muted, fontSize: 12),
+        ),
+        trailing: const Icon(
+          Icons.chevron_right_rounded,
+          color: AppColors.muted,
+        ),
       ),
     );
   }

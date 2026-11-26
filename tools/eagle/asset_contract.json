@@ -1,0 +1,10 @@
+{
+  "species": "Aquila chrysaetos",
+  "asset": "eagle_mascot.glb",
+  "animations": ["Idle", "Study_Start", "Wing_Flap", "Fly", "Landing", "Celebrate", "Rest", "Wake_Up"],
+  "bones": ["Root", "Body", "Spine", "Neck", "Head", "Beak", "Eye.L", "Eye.R", "Shoulder.L", "WingUpper.L", "WingMiddle.L", "WingFeathers.L", "Shoulder.R", "WingUpper.R", "WingMiddle.R", "WingFeathers.R", "Tail", "Leg.L", "Leg.R"],
+  "max_triangles": 100000,
+  "max_glb_bytes": 31457280,
+  "max_texture_edge": 2048,
+  "max_texture_memory_bytes": 134217728
+}

@@ -1,8 +1,35 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Alarms: each permission is explained in-app before it is requested. -->
+    <!-- Android 13+: show the ringing alarm and its Snooze/Dismiss buttons. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Android 12+: ring at the exact minute (user can revoke in Settings).
+         USE_EXACT_ALARM is deliberately not used: Play reserves it for apps
+         whose core function is an alarm clock. -->
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <!-- Re-register alarms after the phone restarts. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- Keep playing the alarm sound until it is dismissed. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <!-- Show the alarm screen over the lock screen (Android 14+: user-granted). -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- Only to record a custom alarm voice, requested when the user taps Record. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- Study Mode: optional Do Not Disturb, only after the user grants access. -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+    <!-- No ads: strip advertising-ID permissions that Firebase Analytics adds. -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_ATTRIBUTION" tools:node="remove" />
+    <uses-permission android:name="android.permission.ACCESS_ADSERVICES_AD_ID" tools:node="remove" />
     <application
         android:label="EAGLE STUDY"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Flutter Scene uses Flutter GPU on the Impeller renderer. -->
+        <meta-data android:name="io.flutter.embedding.android.EnableFlutterGPU" android:value="true" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -25,6 +52,39 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <receiver
+            android:name=".alarm.AlarmReceiver"
+            android:exported="false" />
+        <receiver
+            android:name=".alarm.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <receiver
+            android:name=".study.StudyActionReceiver"
+            android:exported="false" />
+        <service
+            android:name=".alarm.AlarmService"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <activity
+            android:name=".alarm.AlarmActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:taskAffinity="com.eaglestudy.eagle_study.alarm"
+            android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen" />
+        <!-- Analytics without advertising identifiers or ad personalisation. -->
+        <meta-data android:name="google_analytics_adid_collection_enabled" android:value="false" />
+        <meta-data android:name="google_analytics_default_allow_ad_personalization_signals" android:value="false" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

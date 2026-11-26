@@ -63,7 +63,7 @@ class StudyDatabase {
     : _factory = factory, // ignore: prefer_initializing_formals
       _path = path; // ignore: prefer_initializing_formals
 
-  static const schemaVersion = 3;
+  static const schemaVersion = 4;
 
   final DatabaseFactory? _factory;
   final String? _path;
@@ -89,6 +89,7 @@ class StudyDatabase {
           await _createLearningTables(db);
           await _seedLearningPlan(db);
           await createSessionTables(db);
+          await createAlarmTables(db);
         },
         onUpgrade: (db, oldVersion, newVersion) async {
           if (oldVersion < 2) {
@@ -98,6 +99,9 @@ class StudyDatabase {
           if (oldVersion < 3) {
             await createSessionTables(db);
             await _migrateLegacySessions(db);
+          }
+          if (oldVersion < 4) {
+            await createAlarmTables(db);
           }
         },
       ),
@@ -140,6 +144,25 @@ class StudyDatabase {
       'attempts INTEGER NOT NULL DEFAULT 0, '
       'last_error TEXT, '
       'UNIQUE (entity, entity_id))',
+    );
+  }
+
+  /// Schema v4: alarms. The device's AlarmManager schedule is derived from
+  /// this table (see AlarmController), never the other way round.
+  static Future<void> createAlarmTables(DatabaseExecutor db) async {
+    await db.execute(
+      'CREATE TABLE alarms ('
+      'id TEXT PRIMARY KEY, '
+      'hour INTEGER NOT NULL CHECK (hour BETWEEN 0 AND 23), '
+      'minute INTEGER NOT NULL CHECK (minute BETWEEN 0 AND 59), '
+      "days TEXT NOT NULL DEFAULT '[]', "
+      "message TEXT NOT NULL DEFAULT '' CHECK (length(message) <= 200), "
+      "sound TEXT NOT NULL DEFAULT 'classic', "
+      'volume REAL NOT NULL DEFAULT 0.8 CHECK (volume BETWEEN 0.1 AND 1.0), '
+      'vibrate INTEGER NOT NULL DEFAULT 1, '
+      'enabled INTEGER NOT NULL DEFAULT 1, '
+      'recording_path TEXT, '
+      'created_at INTEGER NOT NULL)',
     );
   }
 

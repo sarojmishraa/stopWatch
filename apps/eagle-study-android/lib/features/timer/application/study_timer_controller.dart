@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../core/providers.dart';
+import '../../alarms/application/alarm_controller.dart';
 import '../../sessions/domain/study_session.dart';
 import '../domain/study_timer_state.dart';
 
@@ -32,6 +34,12 @@ class StudyTimerController extends Notifier<StudyTimerState> {
   bool _finishing = false;
   bool _userActed = false;
 
+  /// Native timer-alarm calls run strictly in order, and an arm that was
+  /// superseded (paused/finished meanwhile) is dropped. Without this, a slow
+  /// arm could land after a quick pause and ring for a paused timer.
+  Future<void> _alarmOps = Future.value();
+  int _alarmGeneration = 0;
+
   int get _nowMs => ref.read(clockProvider)().millisecondsSinceEpoch;
 
   @override
@@ -56,6 +64,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
       }
       state = restored;
       _scheduleCompletion();
+      _armTimerAlarm();
       await checkCountdown();
     } finally {
       if (!_restoreCompleter.isCompleted) _restoreCompleter.complete();
@@ -123,6 +132,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
       clearPausedAtMs: true,
     );
     _scheduleCompletion();
+    _armTimerAlarm();
     _persist();
   }
 
@@ -138,6 +148,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
       pausedAtMs: now,
     );
     _completionTimer?.cancel();
+    _disarmTimerAlarm();
     _persist();
   }
 
@@ -156,6 +167,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
   Future<FinishOutcome> finish() async {
     _touch();
     if (!state.hasSession) return FinishOutcome.nothingToFinish;
+    _disarmTimerAlarm();
     final now = _nowMs;
     final endMs = state.isRunning ? now : (state.pausedAtMs ?? now);
     return _save(focusedSeconds: state.focusedSecondsAt(now), endMs: endMs);
@@ -165,6 +177,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
   Future<void> reset() async {
     _touch();
     _completionTimer?.cancel();
+    _disarmTimerAlarm();
     state = state.idle();
     await ref.read(studyDatabaseProvider).clearTimerState();
     _persist();
@@ -250,9 +263,56 @@ class StudyTimerController extends Notifier<StudyTimerState> {
     _completionTimer = Timer(wait, () => unawaited(checkCountdown()));
   }
 
+  /// Asks the native engine to ring when the countdown ends, so completion
+  /// is audible even if the app is backgrounded or killed. Natural
+  /// completion deliberately does not cancel it: that alarm is the sound.
+  void _armTimerAlarm() {
+    final end = state.countdownEndAtMs;
+    if (!state.isRunning || state.mode != TimerMode.countdown || end == null) {
+      return;
+    }
+    final generation = ++_alarmGeneration;
+    final subject = state.subject;
+    _enqueueAlarmOp('schedule the timer alarm', () async {
+      final sound = await ref.read(alarmRepositoryProvider).timerSound();
+      if (generation != _alarmGeneration) return; // paused or finished since
+      await ref
+          .read(alarmBridgeProvider)
+          .scheduleTimerEnd(
+            at: DateTime.fromMillisecondsSinceEpoch(end, isUtc: true),
+            message: subject == null
+                ? 'Focus session complete. Great work.'
+                : 'Focus session complete: $subject. Great work.',
+            sound: sound.name,
+          );
+    });
+  }
+
+  void _disarmTimerAlarm() {
+    _alarmGeneration++;
+    final bridge = ref.read(alarmBridgeProvider);
+    _enqueueAlarmOp('cancel the timer alarm', bridge.cancelTimerEnd);
+  }
+
+  void _enqueueAlarmOp(String what, Future<void> Function() op) {
+    _alarmOps = _alarmOps.then((_) => op()).catchError((Object error) {
+      debugPrint('Could not $what: $error');
+    });
+  }
+
+  /// Completes when queued native alarm calls are done (tests).
+  Future<void> get alarmOpsSettled => _alarmOps;
+
   void _touch() => _userActed = true;
 
   void _persist() {
-    unawaited(ref.read(studyDatabaseProvider).saveTimerState(state.toMap()));
+    unawaited(
+      ref.read(studyDatabaseProvider).saveTimerState(state.toMap()).catchError((
+        Object error,
+      ) {
+        // The next write or the session save will retry; never crash.
+        debugPrint('Could not persist the timer: $error');
+      }),
+    );
   }
 }

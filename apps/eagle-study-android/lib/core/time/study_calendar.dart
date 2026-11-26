@@ -54,6 +54,13 @@ class StudyCalendar {
     return tz.TZDateTime(location, l.year, l.month);
   }
 
+  /// The instant of a local wall-clock time in the study timezone.
+  DateTime at(int year, int month, int day, int hour, int minute) =>
+      tz.TZDateTime(location, year, month, day, hour, minute);
+
+  /// IANA name of the zone, e.g. `Asia/Kolkata`.
+  String get zoneName => location.name;
+
   /// `YYYY-MM-DD` of [instant] in the study timezone.
   String dayKey(DateTime instant) {
     final l = local(instant);

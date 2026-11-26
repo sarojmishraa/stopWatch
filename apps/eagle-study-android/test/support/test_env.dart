@@ -2,12 +2,17 @@ import 'dart:io';
 
 import 'package:eagle_study/core/persistence/study_database.dart';
 import 'package:eagle_study/core/providers.dart';
+import 'package:eagle_study/features/alarms/application/alarm_controller.dart';
+import 'package:eagle_study/features/study/application/study_mode_controller.dart';
 import 'package:eagle_study/core/time/study_calendar.dart';
 import 'package:eagle_study/features/sessions/data/session_repository.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/misc.dart' show Override;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+
+import 'fake_alarm_bridge.dart';
+import 'fake_study_mode_bridge.dart';
 
 /// A clock tests move by hand.
 class FakeClock {
@@ -43,6 +48,8 @@ class TestEnv {
 
   final String dbPath;
   final FakeClock clock;
+  final alarms = FakeAlarmBridge();
+  final studyMode = FakeStudyModeBridge();
   StudyDatabase database;
 
   static StudyDatabase _open(String path) =>
@@ -58,6 +65,8 @@ class TestEnv {
   List<Override> get overrides => [
     clockProvider.overrideWithValue(clock.call),
     studyDatabaseProvider.overrideWithValue(database),
+    alarmBridgeProvider.overrideWithValue(alarms),
+    studyModeBridgeProvider.overrideWithValue(studyMode),
   ];
 
   ProviderContainer container() {

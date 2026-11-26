@@ -1,3 +1,5 @@
+import 'package:eagle_study/features/alarms/data/alarm_repository.dart';
+import 'package:eagle_study/features/alarms/domain/alarm.dart';
 import 'package:eagle_study/features/sessions/domain/study_session.dart';
 import 'package:eagle_study/features/timer/application/study_timer_controller.dart';
 import 'package:eagle_study/features/timer/domain/study_timer_state.dart';
@@ -189,6 +191,74 @@ void main() {
         expect(timer.addLap(), isTrue);
       }
       expect(timer.addLap(), isFalse);
+      await env.database.loadTimerState(); // let queued writes finish
     },
   );
+
+  group('focus timer completion alarm', () {
+    Future<void> flush() =>
+        Future<void>.delayed(const Duration(milliseconds: 50));
+
+    test('starting a countdown schedules a native alarm at its end, using '
+        'the chosen sound and subject', () async {
+      await AlarmRepository(env.database).setTimerSound(AlarmSound.ghost);
+      final c = env.container();
+      final timer = await controllerOf(c);
+      final t0 = env.clock.now;
+
+      timer.setSubject('DSA');
+      timer.setCountdownDuration(25 * 60);
+      timer.startOrResume();
+      await flush();
+
+      final armed = env.alarms.timerEnd!;
+      expect(armed.at, t0.add(const Duration(minutes: 25)));
+      expect(armed.sound, 'ghost');
+      expect(armed.message, contains('DSA'));
+    });
+
+    test('pause cancels it and resume re-arms it for the new end', () async {
+      final c = env.container();
+      final timer = await controllerOf(c);
+      final t0 = env.clock.now;
+      timer.setCountdownDuration(25 * 60);
+      timer.startOrResume();
+      env.clock.advance(const Duration(minutes: 10));
+      timer.pause();
+      await flush();
+      expect(env.alarms.timerEnd, isNull);
+
+      env.clock.advance(const Duration(minutes: 5));
+      timer.startOrResume();
+      await flush();
+      expect(env.alarms.timerEnd!.at, t0.add(const Duration(minutes: 30)));
+    });
+
+    test('natural completion keeps the alarm (it is the completion sound); '
+        'finishing early cancels it', () async {
+      final c = env.container();
+      final timer = await controllerOf(c);
+      timer.setCountdownDuration(60);
+      timer.startOrResume();
+      await flush();
+      env.clock.advance(const Duration(minutes: 2));
+      final cancelsBefore = env.alarms.timerCancels;
+      await timer.checkCountdown();
+      expect(env.alarms.timerCancels, cancelsBefore);
+
+      timer.startOrResume();
+      env.clock.advance(const Duration(seconds: 20));
+      await timer.finish();
+      await flush();
+      expect(env.alarms.timerEnd, isNull);
+    });
+
+    test('stopwatch sessions never schedule a timer alarm', () async {
+      final c = env.container();
+      final timer = await controllerOf(c);
+      timer.startOrResume();
+      await flush();
+      expect(env.alarms.timerEnd, isNull);
+    });
+  });
 }

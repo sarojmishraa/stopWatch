@@ -25,17 +25,21 @@ void main() {
   ) async {
     final env = await pumpDashboard(tester);
 
+    await tester.ensureVisible(find.text('Java'));
     await tester.tap(find.text('Java'));
+    await tester.ensureVisible(find.byIcon(Icons.play_arrow_rounded));
     await tester.tap(find.byIcon(Icons.play_arrow_rounded));
     await settle(tester);
     expect(find.text('SESSION IN PROGRESS'), findsOneWidget);
     expect(find.text('LAP'), findsOneWidget);
 
     env.clock.advance(const Duration(minutes: 25));
+    await tester.ensureVisible(find.byIcon(Icons.pause_rounded));
     await tester.tap(find.byIcon(Icons.pause_rounded));
     await settle(tester);
     expect(find.text('PAUSED'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('FINISH'));
     await tester.tap(find.text('FINISH'));
     await settle(tester);
 
@@ -55,10 +59,12 @@ void main() {
       'is refused', (tester) async {
     await pumpDashboard(tester);
 
+    await tester.ensureVisible(find.text('FOCUS TIMER'));
     await tester.tap(find.text('FOCUS TIMER'));
     await settle(tester);
     expect(find.text('25:00'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('45m'));
     await tester.tap(find.text('45m'));
     await settle(tester);
     expect(find.text('45:00'), findsOneWidget);
@@ -85,10 +91,12 @@ void main() {
     tester,
   ) async {
     final env = await pumpDashboard(tester);
+    await tester.ensureVisible(find.byIcon(Icons.play_arrow_rounded));
     await tester.tap(find.byIcon(Icons.play_arrow_rounded));
     await settle(tester);
     env.clock.advance(const Duration(minutes: 2));
 
+    await tester.ensureVisible(find.text('RESET'));
     await tester.tap(find.text('RESET'));
     await tester.pumpAndSettle();
     expect(find.text('Discard this session?'), findsOneWidget);
@@ -96,6 +104,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('SESSION IN PROGRESS'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('RESET'));
     await tester.tap(find.text('RESET'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('DISCARD'));

@@ -6,6 +6,11 @@ void usePhoneScreen(WidgetTester tester) {
   tester.view.physicalSize = const Size(1170, 2532);
   tester.view.devicePixelRatio = 3;
   addTearDown(tester.view.reset);
+  // Like Android's "Remove animations": stops looping decorative motion
+  // (the 2D eagle's bob) so pumpAndSettle can settle.
+  tester.platformDispatcher.accessibilityFeaturesTestValue =
+      const FakeAccessibilityFeatures(disableAnimations: true);
+  addTearDown(tester.platformDispatcher.clearAccessibilityFeaturesTestValue);
 }
 
 /// Lets real SQLite I/O (which runs outside the fake-async test zone)

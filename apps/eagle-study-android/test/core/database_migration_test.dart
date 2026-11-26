@@ -57,6 +57,7 @@ void main() {
       "SELECT name FROM sqlite_master WHERE name = 'sessions'",
     );
     expect(legacy, isEmpty);
+    expect(await db.query('alarms'), isEmpty, reason: 'v4 alarms table exists');
   });
 
   test('the database enforces session invariants, not just the app', () async {

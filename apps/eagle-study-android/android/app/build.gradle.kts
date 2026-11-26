@@ -8,7 +8,9 @@ plugins {
 
 android {
     namespace = "com.eaglestudy.eagle_study"
-    compileSdk = flutter.compileSdkVersion
+    // Filament (3D eagle) needs compile SDK 37. This only changes which APIs
+    // the code compiles against; targetSdk (runtime behaviour) stays 36.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -66,4 +68,14 @@ dependencies {
     // Firebase BoM keeps all Firebase library versions compatible.
     implementation(platform("com.google.firebase:firebase-bom:35.2.0"))
     implementation("com.google.firebase:firebase-analytics")
+
+    // 3D eagle: Google Filament renderer + glTF loader + ModelViewer utils.
+    implementation("com.google.android.filament:filament-android:1.81.0")
+    implementation("com.google.android.filament:gltfio-android:1.81.0")
+    implementation("com.google.android.filament:filament-utils-android:1.81.0")
+
+    // JVM unit tests for the alarm engine (android/app/src/test).
+    testImplementation("junit:junit:4.13.2")
+    // Real org.json: android.jar only ships stubs that throw in unit tests.
+    testImplementation("org.json:json:20240303")
 }
