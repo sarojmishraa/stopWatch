@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import '../../../core/providers.dart';
 import '../../alarms/application/alarm_controller.dart';
 import '../../sessions/domain/study_session.dart';
+import '../../sync/application/sync_controller.dart';
 import '../domain/study_timer_state.dart';
 
 final studyTimerProvider =
@@ -247,6 +248,7 @@ class StudyTimerController extends Notifier<StudyTimerState> {
       );
       _persist();
       ref.invalidate(studySummaryProvider);
+      ref.read(syncControllerProvider.notifier).syncSilently();
       return capped ? FinishOutcome.savedCapped : FinishOutcome.saved;
     } finally {
       _finishing = false;

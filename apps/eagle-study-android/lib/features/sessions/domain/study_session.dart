@@ -137,6 +137,29 @@ class StudySessionRecord {
     'sourceDevice': sourceDevice,
     'clientUpdatedAt': clientUpdatedAt.toUtc().toIso8601String(),
   };
+
+  /// Parses a session object returned by the Go API (`/v1/study-sessions` or
+  /// `/v1/sync/study-sessions`).
+  factory StudySessionRecord.fromApiJson(Map<String, dynamic> json) {
+    final deletedRaw = json['deletedAt'] as String?;
+    return StudySessionRecord(
+      id: json['id']! as String,
+      mode: SessionMode.values.byName(json['mode']! as String),
+      startedAt: DateTime.parse(json['startedAt']! as String).toUtc(),
+      endedAt: DateTime.parse(json['endedAt']! as String).toUtc(),
+      durationSeconds: (json['durationSeconds']! as num).toInt(),
+      plannedSeconds: (json['plannedSeconds'] as num?)?.toInt(),
+      subject: json['subject'] as String?,
+      notes: json['notes'] as String?,
+      lapsSeconds: ((json['lapsSeconds'] as List<dynamic>?) ?? const [])
+          .map((e) => (e as num).toInt())
+          .toList(),
+      sourceDevice: json['sourceDevice']! as String,
+      clientUpdatedAt:
+          DateTime.parse(json['clientUpdatedAt']! as String).toUtc(),
+      deletedAt: deletedRaw == null ? null : DateTime.parse(deletedRaw).toUtc(),
+    );
+  }
 }
 
 class StudySummary {

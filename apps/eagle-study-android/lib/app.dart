@@ -11,6 +11,7 @@ import 'features/learning/presentation/learning_dashboard_screen.dart';
 import 'features/sessions/presentation/history_screen.dart';
 import 'features/study/application/study_mode_controller.dart';
 import 'features/study/presentation/study_screen.dart';
+import 'features/sync/application/sync_controller.dart';
 import 'features/timer/application/study_timer_controller.dart';
 
 final _router = GoRouter(
@@ -51,11 +52,13 @@ class _EagleStudyAppState extends ConsumerState<EagleStudyApp> {
     actions.handlePending();
     // If the app was killed in Study Mode, give back the user's DND setting.
     ref.read(studyModeProvider.notifier).healAfterRestart();
+    ref.read(syncControllerProvider.notifier).syncSilently();
     _lifecycle = AppLifecycleListener(
       onResume: () {
         // A countdown may have ended, or the day changed, while suspended.
         ref.read(studyTimerProvider.notifier).checkCountdown();
         ref.invalidate(studySummaryProvider);
+        ref.read(syncControllerProvider.notifier).syncSilently();
         // One-time alarms may have rung, and permissions may have changed.
         ref.read(alarmControllerProvider.notifier).refreshFired().ignore();
         ref.invalidate(alarmPermissionsProvider);

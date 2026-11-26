@@ -6,6 +6,7 @@ import '../../../core/providers.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/time/study_calendar.dart';
 import '../../../core/widgets/glass_panel.dart';
+import '../../sync/application/sync_controller.dart';
 import '../data/session_repository.dart';
 import '../domain/study_session.dart';
 import 'session_format.dart';
@@ -92,6 +93,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     );
     if (changed == true) {
       ref.invalidate(studySummaryProvider);
+      ref.read(syncControllerProvider.notifier).syncSilently();
       await _reload();
     }
   }

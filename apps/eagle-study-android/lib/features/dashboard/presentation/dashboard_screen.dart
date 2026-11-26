@@ -7,9 +7,12 @@ import '../../../core/theme/app_theme.dart';
 import '../../../core/widgets/glass_panel.dart';
 import '../../alarms/application/alarm_controller.dart';
 import '../../alarms/presentation/alarm_format.dart';
+import '../../auth/application/auth_controller.dart';
 import '../../eagle/presentation/widgets/eagle_3d_view.dart';
 import '../../sessions/domain/study_session.dart';
 import '../../sessions/presentation/session_format.dart';
+import '../../sync/application/sync_controller.dart';
+import '../../sync/presentation/sync_account_sheet.dart';
 import '../../timer/application/study_timer_controller.dart';
 import '../../timer/domain/study_timer_state.dart';
 
@@ -1101,36 +1104,67 @@ class _SessionRow extends StatelessWidget {
   }
 }
 
-class _OfflineNote extends StatelessWidget {
+class _OfflineNote extends ConsumerWidget {
   const _OfflineNote({required this.pendingSync});
 
   final int pendingSync;
 
   @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(
-          Icons.lock_outline_rounded,
-          size: 13,
-          color: AppColors.muted.withValues(alpha: 0.8),
-        ),
-        const SizedBox(width: 6),
-        Flexible(
-          child: Text(
-            pendingSync == 0
-                ? 'Saved on this device'
-                : 'Saved on this device · $pendingSync '
-                      '${pendingSync == 1 ? 'change' : 'changes'} waiting to sync',
-            textAlign: TextAlign.center,
-            style: TextStyle(
-              color: AppColors.muted.withValues(alpha: 0.8),
-              fontSize: 10,
+  Widget build(BuildContext context, WidgetRef ref) {
+    final session = ref.watch(authControllerProvider).value;
+    final sync = ref.watch(syncControllerProvider);
+
+    final IconData icon;
+    final Color color;
+    final String label;
+
+    if (session == null) {
+      icon = Icons.lock_outline_rounded;
+      color = AppColors.muted.withValues(alpha: 0.8);
+      label = pendingSync == 0
+          ? 'Saved on this device'
+          : 'Saved on this device · $pendingSync '
+                '${pendingSync == 1 ? 'change' : 'changes'} waiting to sync';
+    } else if (sync.syncing) {
+      icon = Icons.cloud_sync_rounded;
+      color = AppColors.cyan;
+      label = 'Syncing with PostgreSQL...';
+    } else if (sync.lastError != null) {
+      icon = Icons.error_outline_rounded;
+      color = AppColors.pink;
+      label = 'Sync paused · Tap to retry';
+    } else if (pendingSync > 0) {
+      icon = Icons.cloud_upload_outlined;
+      color = AppColors.cyan;
+      label =
+          '$pendingSync ${pendingSync == 1 ? 'change' : 'changes'} waiting · Tap to sync';
+    } else {
+      icon = Icons.cloud_done_rounded;
+      color = AppColors.lime.withValues(alpha: 0.9);
+      label = 'Synced to cloud (${session.email})';
+    }
+
+    return InkWell(
+      onTap: () => showSyncAccountSheet(context),
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 6),
+            Flexible(
+              child: Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(color: color, fontSize: 11),
+              ),
             ),
-          ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }
