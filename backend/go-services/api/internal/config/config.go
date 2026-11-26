@@ -30,8 +30,17 @@ type AuthConfig struct {
 }
 
 func Load() (Config, error) {
+	httpAddr := env("HTTP_ADDR", "")
+	if httpAddr == "" {
+		if port := os.Getenv("PORT"); port != "" {
+			httpAddr = ":" + port
+		} else {
+			httpAddr = ":8080"
+		}
+	}
+
 	cfg := Config{
-		HTTPAddr:        env("HTTP_ADDR", ":8080"),
+		HTTPAddr:        httpAddr,
 		DatabaseURL:     os.Getenv("DATABASE_URL"),
 		MigrateOnStart:  env("MIGRATE_ON_START", "true") == "true",
 		ShutdownTimeout: 20 * time.Second,
